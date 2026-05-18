@@ -1,10 +1,10 @@
 name: Crypto Signal Scanner
+
 on:
   push:
     branches: [ main ]
   schedule:
-    - cron: '*/5 * * * *'
-  workflow_dispatch:
+    - cron: '*/5 * * * *'  # 每5分钟运行一次
 
 jobs:
   scan:
@@ -20,10 +20,7 @@ jobs:
 
       - name: Run scanner
         env:
-          ALERT_EMAIL: ${{ secrets.ALERT_EMAIL }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           MIN_SIGNALS: ${{ secrets.MIN_SIGNALS }}
-          SMTP_SERVER: ${{ secrets.SMTP_SERVER }}
-          SMTP_PORT: ${{ secrets.SMTP_PORT }}
-          SMTP_USER: ${{ secrets.SMTP_USER }}
-          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
         run: python signal_scanner.py
