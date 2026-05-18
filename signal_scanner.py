@@ -1,7 +1,14 @@
+#!/usr/bin/env python3
+"""
+BTC/ETH/SOL 多空信号自动扫描器 电报推送版
+"""
 import os
 import requests
+import json
+import math
+from datetime import datetime, timezone, timedelta
 
-# 从GitHub Secrets读取配置
+# 读取配置
 BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 MIN_SIGNALS = int(os.environ.get("MIN_SIGNALS", "6"))
@@ -31,10 +38,9 @@ def send_telegram_alert(message):
         return False
 
 def main():
-    print(f"[扫描中 (信号阈值: {MIN_SIGNALS})] ...")
+    print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] 扫描中 (信号阈值: {MIN_SIGNALS}) ...")
     
-    # 这里是原来的扫描逻辑，保留你之前的部分
-    # 示例：模拟扫描结果
+    # 这里保留你原来的扫描逻辑（如果有），下面是示例模拟数据
     signals = [
         {"pair": "BTC-USDT", "side": "LONG", "price": 77288.20, "count": 2},
         {"pair": "BTC-USDT", "side": "SHORT", "price": 77288.20, "count": 3},
