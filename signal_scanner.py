@@ -18,11 +18,14 @@ jobs:
         with:
           python-version: '3.10'
 
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests
+
       - name: Run scanner
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           MIN_SIGNALS: ${{ secrets.MIN_SIGNALS }}
-        run: |
-          pip install requests
-          python signal_scanner.py
+        run: python signal_scanner.py
