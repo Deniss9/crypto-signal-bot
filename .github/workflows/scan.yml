@@ -1,0 +1,29 @@
+name: Crypto Signal Scanner
+on:
+  push:
+    branches: [ main ]
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Run scanner
+        env:
+          ALERT_EMAIL: ${{ secrets.ALERT_EMAIL }}
+          MIN_SIGNALS: ${{ secrets.MIN_SIGNALS }}
+          SMTP_SERVER: ${{ secrets.SMTP_SERVER }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+        run: python signal_scanner.py
