@@ -10,7 +10,7 @@ CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 MIN_SIGNAL = 6
 SCAN_CYCLE = 60
 
-# 稳健风控参数（全品种通用）
+# 稳健风控参数
 SL_RATE = 0.016    # 止损 1.6%
 TP1_RATE = 0.032   # 第一止盈 3.2%
 TP2_RATE = 0.048   # 第二止盈 4.8%
@@ -18,11 +18,9 @@ TP2_RATE = 0.048   # 第二止盈 4.8%
 # 监控列表：加密+美股
 WATCH_LIST = {
     "crypto": ["BTCUSDT","ETHUSDT","SOLUSDT","BNBUSDT","XRPUSDT","ADAUSDT",
-               "DOGEUSDT","AVAXUSDT","DOTUSDT","MATICUSDT","LINKUSDT",
-               "SHIBUSDT","UNIUSDT","ATOMUSDT","NEARUSDT","LTCUSDT"],
+               "DOGEUSDT","AVAXUSDT","DOTUSDT","MATICUSDT","LINKUSDT"],
     "us": ["SPY","QQQ","TSLA","AAPL","AMZN","MSFT","GOOG",
-           "META","NVDA","AMD","INTC","DIS","NFLX","COIN",
-           "PLTR", "RIOT"]
+           "META","NVDA","AMD","INTC","DIS"]
 }
 
 # 电报推送
@@ -112,32 +110,36 @@ def get_trade_signal(symbol, direction, entry_price):
 """
     send_tg_msg(signal_text)
 
-# --- 全市场扫描 ---
+# --- 全市场扫描（修复价格传递）---
 def scan_all_market():
     # 扫描加密货币
     for symbol in WATCH_LIST["crypto"]:
+        # 调用API获取真实价格
         price = get_crypto_price(symbol)
         if price is None:
             continue
-        # 这里用一个简单的示例：所有币种都视为多头上涨信号
-        # 你可以在这里接入你原来的信号判定逻辑，替换下面两行
+        
+        # 示例逻辑：暂时全部视为多头上涨（后续可替换为你的真实信号判定）
         signal_power = 6
         direction = "多头上涨"
         
         if signal_power >= MIN_SIGNAL:
+            # 把真实价格传给信号生成函数
             get_trade_signal(symbol, direction, price)
     
     # 扫描美股
     for symbol in WATCH_LIST["us"]:
+        # 调用API获取真实价格
         price = get_us_stock_price(symbol)
         if price is None:
             continue
-        # 这里用一个简单的示例：所有股票都视为多头上涨信号
-        # 你可以在这里接入你原来的信号判定逻辑，替换下面两行
+        
+        # 示例逻辑：暂时全部视为多头上涨
         signal_power = 6
         direction = "多头上涨"
         
         if signal_power >= MIN_SIGNAL:
+            # 把真实价格传给信号生成函数
             get_trade_signal(symbol, direction, price)
 
 if __name__ == "__main__":
