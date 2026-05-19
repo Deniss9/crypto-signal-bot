@@ -1,95 +1,136 @@
 import requests
 import time
 import os
+import yfinance as yf
+from decimal import Decimal, ROUND_DOWN
 
-# 基础环境配置
+# 基础配置
 BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
-MIN_FULL_SIGNAL = 6
-SCAN_INTERVAL = 60
+MIN_SIGNAL = 6
+SCAN_CYCLE = 60
 
-# 顶级稳健交易参数（全品种通用）
-FIX_SL_PERCENT = 0.016    # 统一止损 1.6%
-FIX_TP1_PERCENT = 0.032   # 第一止盈 3.2%
-FIX_TP2_PERCENT = 0.048   # 第二止盈 4.8%
+# 稳健风控参数（全品种通用）
+SL_RATE = 0.016    # 止损 1.6%
+TP1_RATE = 0.032   # 第一止盈 3.2%
+TP2_RATE = 0.048   # 第二止盈 4.8%
 
-# ========== 全网最全监控池 加密+美股全部纳入 ==========
-WATCH_ALL_SYMBOLS = [
-    # 主流加密货币
-    "BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT", "ADAUSDT",
-    "DOGEUSDT", "AVAXUSDT", "DOTUSDT", "MATICUSDT", "LINKUSDT",
-    "SHIBUSDT", "UNIUSDT", "ATOMUSDT", "NEARUSDT", "FTMUSDT",
-    "TRXUSDT", "LTCUSDT", "BCHUSDT", "ETCUSDT", "FILUSDT",
-    
-    # 美股大盘指数 + 核心热门个股
-    "SPY", "QQQ", "DIA", "IWM", "VIX",
-    "TSLA", "AAPL", "AMZN", "MSFT", "GOOG", "META",
-    "NVDA", "AMD", "INTC", "ORCL", "CRM", "DIS",
-    "NFLX", "UBER", "COIN", "PLTR", "RIOT"
-]
+# 监控列表：加密+美股
+WATCH_LIST = {
+    "crypto": ["BTCUSDT","ETHUSDT","SOLUSDT","BNBUSDT","XRPUSDT","ADAUSDT",
+               "DOGEUSDT","AVAXUSDT","DOTUSDT","MATICUSDT","LINKUSDT",
+               "SHIBUSDT","UNIUSDT","ATOMUSDT","NEARUSDT","LTCUSDT"],
+    "us": ["SPY","QQQ","TSLA","AAPL","AMZN","MSFT","GOOG",
+           "META","NVDA","AMD","INTC","DIS","NFLX","COIN"]
+}
 
-# 电报推送消息
-def tg_send(msg):
+# 电报推送
+def send_tg_msg(text):
     if not BOT_TOKEN or not CHAT_ID:
-        print("电报密钥缺失")
+        print("电报密钥未配置")
         return
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+    api = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
     try:
-        requests.post(url, data={
+        requests.post(api, data={
             "chat_id": CHAT_ID,
-            "text": msg,
+            "text": text,
             "parse_mode": "Markdown"
         })
-        print("✅ 信号推送成功")
+        print("✅ 信号已推送")
     except Exception as e:
-        print(f"推送失败：{str(e)}")
+        print(f"❌ 推送失败：{e}")
 
-# 自动计算多空点位 + 生成完整交易策略
-def create_order_info(symbol, trend, now_price):
-    if trend == "上涨强势":
-        mode = "稳健做多"
-        stop_loss = now_price * (1 - FIX_SL_PERCENT)
-        take1 = now_price * (1 + FIX_TP1_PERCENT)
-        take2 = now_price * (1 + FIX_TP2_PERCENT)
+# --- 1. 获取加密货币实时价格（币安API）---
+def get_crypto_price(symbol):
+    try:
+        url = f"https://api.binance.com/api/v3/ticker/price?symbol={symbol}"
+        res = requests.get(url, timeout=10)
+        res.raise_for_status()
+        price = Decimal(res.json()["price"])
+        # 按币种精度四舍五入
+        if symbol in ["BTCUSDT","ETHUSDT"]:
+            return float(price.quantize(Decimal('0.01'), rounding=ROUND_DOWN))
+        else:
+            return float(price.quantize(Decimal('0.0001'), rounding=ROUND_DOWN))
+    except Exception as e:
+        print(f"获取{symbol}价格失败：{e}")
+        return None
+
+# --- 2. 获取美股实时价格（Yahoo Finance）---
+def get_us_stock_price(symbol):
+    try:
+        ticker = yf.Ticker(symbol)
+        price = ticker.history(period='1d')['Close'].iloc[-1]
+        return round(price, 2)
+    except Exception as e:
+        print(f"获取{symbol}价格失败：{e}")
+        return None
+
+# --- 生成带实时价格的多空信号 ---
+def get_trade_signal(symbol, direction, entry_price):
+    if not entry_price:
+        return
+    if direction == "多头上涨":
+        operate = "做多"
+        stop_loss = entry_price * (1 - SL_RATE)
+        take_profit1 = entry_price * (1 + TP1_RATE)
+        take_profit2 = entry_price * (1 + TP2_RATE)
     else:
-        mode = "稳健做空"
-        stop_loss = now_price * (1 + FIX_SL_PERCENT)
-        take1 = now_price * (1 - FIX_TP1_PERCENT)
-        take2 = now_price * (1 - FIX_TP2_PERCENT)
+        operate = "做空"
+        stop_loss = entry_price * (1 + SL_RATE)
+        take_profit1 = entry_price * (1 - TP1_RATE)
+        take_profit2 = entry_price * (1 - TP2_RATE)
 
-    content = f"""
-📊【全市场精品交易信号】
+    # 价格格式化，避免显示过多小数
+    def fmt(p):
+        if p >= 1000:
+            return f"{p:.2f}"
+        elif p >= 1:
+            return f"{p:.4f}"
+        else:
+            return f"{p:.6f}"
+
+    signal_text = f"""
+🔔【全市场精品交易信号】
 品种：{symbol}
-交易方向：{mode}
-当前趋势：{trend}
-参考入场价：{now_price:.2f}
-强制止损位：{stop_loss:.2f}
-第一止盈(减半仓)：{take1:.2f}
-终极止盈(全离场)：{take2:.2f}
-
-————交易执行守则————
+操作方向：{operate}
+趋势判定：{direction}
+参考入场价：{fmt(entry_price)}
+——————————————
+🛑 硬性止损价：{fmt(stop_loss)}
+✅ 第一止盈价：{fmt(take_profit1)}（减半仓）
+🎯 终极止盈价：{fmt(take_profit2)}（全离场）
+——————————————
+交易规则
 1. 仅执行6/6满格强信号，杂信号直接放弃
 2. 现价附近轻仓进场，拒绝追涨杀跌
-3. 止损必严格执行，绝不扛单逆势加仓
+3. 触及止损无条件离场，绝不扛单逆势加仓
 4. 抵达第一止盈锁定半仓利润
-5. 剩余仓位移动止损至成本价保本
-6. 加密/美股统一风控，稳健长期盈利
+5. 剩余仓位移止损至成本价保本持有
 """
-    tg_send(content)
+    send_tg_msg(signal_text)
 
-# 全市场自动轮询扫描
-def market_all_scan():
-    for target in WATCH_ALL_SYMBOLS:
-        # 对接你原有行情逻辑 识别趋势+信号强度
-        signal_score = 6
-        if signal_score >= MIN_FULL_SIGNAL:
-            # 识别上涨/下跌趋势
-            trend_direct = "上涨强势"
-            # 填入实时价格即可自动计算全部点位
-            create_order_info(target, trend_direct, 68200)
+# --- 全市场扫描 ---
+def scan_all_market():
+    # 扫描加密货币
+    for symbol in WATCH_LIST["crypto"]:
+        price = get_crypto_price(symbol)
+        # 这里后续接入你的信号判定逻辑即可
+        signal_power = 6  # 示例值，后续替换为你的实际信号强度
+        direction = "多头上涨"  # 示例值，后续替换为你的实际趋势
+        if signal_power >= MIN_SIGNAL and price:
+            get_trade_signal(symbol, direction, price)
+    
+    # 扫描美股
+    for symbol in WATCH_LIST["us"]:
+        price = get_us_stock_price(symbol)
+        signal_power = 6  # 示例值，后续替换为你的实际信号强度
+        direction = "多头上涨"  # 示例值，后续替换为你的实际趋势
+        if signal_power >= MIN_SIGNAL and price:
+            get_trade_signal(symbol, direction, price)
 
 if __name__ == "__main__":
-    print("全市场加密+美股监控系统启动成功")
+    print("全市场实时监控启动成功！")
     while True:
-        market_all_scan()
-        time.sleep(SCAN_INTERVAL)
+        scan_all_market()
+        time.sleep(SCAN_CYCLE)
