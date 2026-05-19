@@ -21,7 +21,8 @@ WATCH_LIST = {
                "DOGEUSDT","AVAXUSDT","DOTUSDT","MATICUSDT","LINKUSDT",
                "SHIBUSDT","UNIUSDT","ATOMUSDT","NEARUSDT","LTCUSDT"],
     "us": ["SPY","QQQ","TSLA","AAPL","AMZN","MSFT","GOOG",
-           "META","NVDA","AMD","INTC","DIS","NFLX","COIN"]
+           "META","NVDA","AMD","INTC","DIS","NFLX","COIN",
+           "PLTR", "RIOT"]
 }
 
 # 电报推送
@@ -94,19 +95,20 @@ def get_trade_signal(symbol, direction, entry_price):
 🔔【全市场精品交易信号】
 品种：{symbol}
 操作方向：{operate}
-趋势判定：{direction}
+当前趋势：{direction}
 参考入场价：{fmt(entry_price)}
 ——————————————
 🛑 硬性止损价：{fmt(stop_loss)}
-✅ 第一止盈价：{fmt(take_profit1)}（减半仓）
-🎯 终极止盈价：{fmt(take_profit2)}（全离场）
+✅ 第一止盈价（减半仓）：{fmt(take_profit1)}
+🎯 终极止盈价（全离场）：{fmt(take_profit2)}
 ——————————————
-交易规则
+交易执行守则
 1. 仅执行6/6满格强信号，杂信号直接放弃
 2. 现价附近轻仓进场，拒绝追涨杀跌
-3. 触及止损无条件离场，绝不扛单逆势加仓
+3. 止损必严格执行，绝不扛单逆势加仓
 4. 抵达第一止盈锁定半仓利润
-5. 剩余仓位移止损至成本价保本持有
+5. 剩余仓位移止损至成本价保本
+6. 加密/美股统一风控，稳健长期盈利
 """
     send_tg_msg(signal_text)
 
@@ -115,18 +117,27 @@ def scan_all_market():
     # 扫描加密货币
     for symbol in WATCH_LIST["crypto"]:
         price = get_crypto_price(symbol)
-        # 这里后续接入你的信号判定逻辑即可
-        signal_power = 6  # 示例值，后续替换为你的实际信号强度
-        direction = "多头上涨"  # 示例值，后续替换为你的实际趋势
-        if signal_power >= MIN_SIGNAL and price:
+        if price is None:
+            continue
+        # 这里用一个简单的示例：所有币种都视为多头上涨信号
+        # 你可以在这里接入你原来的信号判定逻辑，替换下面两行
+        signal_power = 6
+        direction = "多头上涨"
+        
+        if signal_power >= MIN_SIGNAL:
             get_trade_signal(symbol, direction, price)
     
     # 扫描美股
     for symbol in WATCH_LIST["us"]:
         price = get_us_stock_price(symbol)
-        signal_power = 6  # 示例值，后续替换为你的实际信号强度
-        direction = "多头上涨"  # 示例值，后续替换为你的实际趋势
-        if signal_power >= MIN_SIGNAL and price:
+        if price is None:
+            continue
+        # 这里用一个简单的示例：所有股票都视为多头上涨信号
+        # 你可以在这里接入你原来的信号判定逻辑，替换下面两行
+        signal_power = 6
+        direction = "多头上涨"
+        
+        if signal_power >= MIN_SIGNAL:
             get_trade_signal(symbol, direction, price)
 
 if __name__ == "__main__":
