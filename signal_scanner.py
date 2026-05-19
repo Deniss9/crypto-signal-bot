@@ -5,51 +5,43 @@ import os
 # 基础配置
 BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
-SCAN_INTERVAL = 60  # 60秒扫一次
+SCAN_INTERVAL = 60
 
-# 风控比例（按每个币自己的价格算）
-SL_PERCENT = 0.016  # 止损 1.6%
-TP1_PERCENT = 0.032 # 第一止盈 3.2%
-TP2_PERCENT = 0.048 # 第二止盈 4.8%
+# 风控比例（按实时价格计算）
+SL_RATE = 0.016
+TP1_RATE = 0.032
+TP2_RATE = 0.048
 
-# 监控的币种列表
-WATCH_SYMBOLS = [
-    "ATOMUSDT", "UNIUSDT", "SHIBUSDT", "SOLUSDT", "BTCUSDT", "ETHUSDT"
-]
+# 监控列表（你电报里的币种）
+SYMBOLS = ["ATOMUSDT", "PLTRUSDT", "RIOTUSDT", "BTCUSDT", "ETHUSDT"]
 
 # 电报推送
-def send_tg_message(text):
+def send_telegram(text):
     if not BOT_TOKEN or not CHAT_ID:
-        print("电报密钥未配置")
         return
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
     try:
-        requests.post(url, data={"chat_id": CHAT_ID, "text": text})
-    except Exception as e:
-        print(f"发送失败：{e}")
+        requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
+                      data={"chat_id": CHAT_ID, "text": text})
+    except:
+        pass
 
-# 获取币安实时价格（关键！每个币用自己的价格）
-def get_binance_price(symbol):
+# 获取币安实时价格（无任何硬编码）
+def get_price(symbol):
     try:
         url = f"https://api.binance.com/api/v3/ticker/price?symbol={symbol}"
         res = requests.get(url, timeout=5)
         res.raise_for_status()
         return float(res.json()["price"])
     except Exception as e:
-        print(f"获取{symbol}价格失败：{e}")
+        print(f"获取{symbol}价格失败: {e}")
         return None
 
-# 按每个币自己的价格，算止盈止损
-def create_trade_signal(symbol, price):
-    if not price:
-        return
-    
-    # 按比例算，每个币自己的价格算出来的止盈止损
-    sl = price * (1 - SL_PERCENT)
-    tp1 = price * (1 + TP1_PERCENT)
-    tp2 = price * (1 + TP2_PERCENT)
+# 生成带实时价格的信号
+def make_signal(symbol, price):
+    sl = price * (1 - SL_RATE)
+    tp1 = price * (1 + TP1_RATE)
+    tp2 = price * (1 + TP2_RATE)
 
-    # 价格格式化，避免小数位数太多
     def fmt(p):
         if p >= 1000:
             return f"{p:.2f}"
@@ -58,7 +50,7 @@ def create_trade_signal(symbol, price):
         else:
             return f"{p:.6f}"
 
-    message = f"""
+    msg = f"""
 【全市场精品交易信号】品种：{symbol}
 交易方向：稳健做多
 当前趋势：上涨强势
@@ -73,18 +65,17 @@ def create_trade_signal(symbol, price):
 3. 止损必严格执行，绝不扛单逆势加仓
 4. 抵达第一止盈锁定半仓利润
 5. 剩余仓位移止损至成本价保本
-6. 加密/美股统一风控，稳健长期盈利
+6. 加密统一风控，稳健长期盈利
 """
-    send_tg_message(message)
+    send_telegram(msg)
 
-# 主循环：每个币用自己的价格
+# 主循环
 if __name__ == "__main__":
-    print("实时价格监控启动！")
+    print("实时价格监控启动")
     while True:
-        for symbol in WATCH_SYMBOLS:
-            # 调用API获取这个币自己的实时价格
-            price = get_binance_price(symbol)
-            if price:
-                create_trade_signal(symbol, price)
+        for s in SYMBOLS:
+            p = get_price(s)
+            if p:
+                make_signal(s, p)
             time.sleep(0.5)
         time.sleep(SCAN_INTERVAL)
