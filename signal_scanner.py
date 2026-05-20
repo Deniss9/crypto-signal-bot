@@ -223,44 +223,7 @@ def main():
         scan_one(s, i)
 
 if __name__ == "__main__":
-    main()
-# 【防刷屏指令回复】只在你发指令时才回复，不会自动刷屏
-import time
-import requests
-
-TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
-MY_ID = os.environ.get("TELEGRAM_CHAT_ID")
-LAST_UPDATE_ID = 0
-
-def auto_reply():
-    global LAST_UPDATE_ID
-    if not TOKEN or not MY_ID:
-        return
-    try:
-        url = f"https://api.telegram.org/bot{TOKEN}/getUpdates?offset={LAST_UPDATE_ID + 1}&timeout=5"
-        res = requests.get(url, timeout=10).json()
-
-        if res["ok"] and res["result"]:
-            for update in res["result"]:
-                LAST_UPDATE_ID = update["update_id"]
-                message = update.get("message", {})
-                text = message.get("text", "")
-                chat_id = message.get("chat", {}).get("id", 0)
-
-                if str(chat_id) == MY_ID:
-                    if text == "/start":
-                        requests.post(
-                            f"https://api.telegram.org/bot{TOKEN}/sendMessage",
-                            data={"chat_id": MY_ID, "text": "✅ 监控已启动，信号会自动推送，静待交易机会！"}
-                        )
-                    elif text == "/status":
-                        requests.post(
-                            f"https://api.telegram.org/bot{TOKEN}/sendMessage",
-                            data={"chat_id": MY_ID, "text": "✅ 策略运行正常，行情扫描中，当前无触发信号"}
-                        )
-    except Exception as e:
-        print(f"回复处理失败: {e}")
-
+    main()  
 # 在主循环里，只调用 auto_reply()，不发其他自动消息
 while True:
     auto_reply()  # 只处理你发的指令
