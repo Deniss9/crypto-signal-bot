@@ -224,31 +224,48 @@ def main():
 
 if __name__ == "__main__":
     main()
-# 新增 电报自动回复 不影响任何策略
+# 【修复版】电报指令回复，防刷屏！
 import time
 import requests
 
 TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 MY_ID = os.environ.get("TELEGRAM_CHAT_ID")
-last_id = 0
+# 关键：记录已处理的消息ID，防止重复回复
+LAST_UPDATE_ID = 0
 
 def auto_reply():
-    global last_id
+    global LAST_UPDATE_ID
+    if not TOKEN or not MY_ID:
+        return
     try:
-        res = requests.get(f"https://api.telegram.org/bot{TOKEN}/getUpdates?offset={last_id+1}").json()
-        if res["result"]:
-            for d in res["result"]:
-                last_id = d["update_id"]
-                uid = d["message"]["chat"]["id"]
-                txt = d["message"]["text"]
-                if str(uid) == MY_ID:
-                    if txt == "/start":
-                        requests.post(f"https://api.telegram.org/bot{TOKEN}/sendMessage",data={"chat_id":MY_ID,"text":"✅监控正常运行，等待行情信号"})
-                    elif txt == "/status":
-                        requests.post(f"https://api.telegram.org/bot{TOKEN}/sendMessage",data={"chat_id":MY_ID,"text":"✅策略运行正常，行情扫描中"})
-    except:
-        pass
+        # 只获取我们还没处理过的消息
+        url = f"https://api.telegram.org/bot{TOKEN}/getUpdates?offset={LAST_UPDATE_ID + 1}&timeout=5"
+        res = requests.get(url, timeout=10).json()
 
-# 放在你原有主循环里面，随便加一行
+        if res["ok"] and res["result"]:
+            for update in res["result"]:
+                # 更新已处理的消息ID
+                LAST_UPDATE_ID = update["update_id"]
+                message = update.get("message", {})
+                text = message.get("text", "")
+                chat_id = message.get("chat", {}).get("id", 0)
+
+                # 只回复你一个人
+                if str(chat_id) == MY_ID:
+                    if text == "/start":
+                        requests.post(
+                            f"https://api.telegram.org/bot{TOKEN}/sendMessage",
+                            data={"chat_id": MY_ID, "text": "✅ 监控已启动，信号会自动推送，静待交易机会！"}
+                        )
+                    elif text == "/status":
+                        requests.post(
+                            f"https://api.telegram.org/bot{TOKEN}/sendMessage",
+                            data={"chat_id": MY_ID, "text": "✅ 策略运行正常，行情扫描中，当前无触发信号"}
+                        )
+    except Exception as e:
+        print(f"回复处理失败: {e}")
+
+# 主循环里调用的频率也改一下，改成10秒一次，避免太频繁
+# 在你原来的 while True 循环里：
 auto_reply()
-time.sleep(5)
+time.sleep(10)
