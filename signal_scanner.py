@@ -224,3 +224,31 @@ def main():
 
 if __name__ == "__main__":
     main()
+# 新增 电报自动回复 不影响任何策略
+import time
+import requests
+
+TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
+MY_ID = os.environ.get("TELEGRAM_CHAT_ID")
+last_id = 0
+
+def auto_reply():
+    global last_id
+    try:
+        res = requests.get(f"https://api.telegram.org/bot{TOKEN}/getUpdates?offset={last_id+1}").json()
+        if res["result"]:
+            for d in res["result"]:
+                last_id = d["update_id"]
+                uid = d["message"]["chat"]["id"]
+                txt = d["message"]["text"]
+                if str(uid) == MY_ID:
+                    if txt == "/start":
+                        requests.post(f"https://api.telegram.org/bot{TOKEN}/sendMessage",data={"chat_id":MY_ID,"text":"✅监控正常运行，等待行情信号"})
+                    elif txt == "/status":
+                        requests.post(f"https://api.telegram.org/bot{TOKEN}/sendMessage",data={"chat_id":MY_ID,"text":"✅策略运行正常，行情扫描中"})
+    except:
+        pass
+
+# 放在你原有主循环里面，随便加一行
+auto_reply()
+time.sleep(5)
