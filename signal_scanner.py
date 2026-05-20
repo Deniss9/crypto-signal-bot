@@ -224,13 +224,12 @@ def main():
 
 if __name__ == "__main__":
     main()
-# 【修复版】电报指令回复，防刷屏！
+# 【防刷屏指令回复】只在你发指令时才回复，不会自动刷屏
 import time
 import requests
 
 TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 MY_ID = os.environ.get("TELEGRAM_CHAT_ID")
-# 关键：记录已处理的消息ID，防止重复回复
 LAST_UPDATE_ID = 0
 
 def auto_reply():
@@ -238,19 +237,16 @@ def auto_reply():
     if not TOKEN or not MY_ID:
         return
     try:
-        # 只获取我们还没处理过的消息
         url = f"https://api.telegram.org/bot{TOKEN}/getUpdates?offset={LAST_UPDATE_ID + 1}&timeout=5"
         res = requests.get(url, timeout=10).json()
 
         if res["ok"] and res["result"]:
             for update in res["result"]:
-                # 更新已处理的消息ID
                 LAST_UPDATE_ID = update["update_id"]
                 message = update.get("message", {})
                 text = message.get("text", "")
                 chat_id = message.get("chat", {}).get("id", 0)
 
-                # 只回复你一个人
                 if str(chat_id) == MY_ID:
                     if text == "/start":
                         requests.post(
@@ -265,7 +261,8 @@ def auto_reply():
     except Exception as e:
         print(f"回复处理失败: {e}")
 
-# 主循环里调用的频率也改一下，改成10秒一次，避免太频繁
-# 在你原来的 while True 循环里：
-auto_reply()
-time.sleep(10)
+# 在主循环里，只调用 auto_reply()，不发其他自动消息
+while True:
+    auto_reply()  # 只处理你发的指令
+    # 你的原策略代码...
+    time.sleep(10)  # 10秒循环一次，避免请求太频繁
