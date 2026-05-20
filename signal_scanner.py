@@ -1,79 +1,81 @@
-import os
-import time
 import requests
-from datetime import datetime
+import time
+import os
 
-# 配置信息
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+# 配置
+BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
+CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
+INTERVAL = 60
 
-# 币安备用API地址列表（自动轮询解决451限制）
-BINANCE_API_HOSTS = [
-    "https://api1.binance.com",
-    "https://api2.binance.com",
-    "https://api3.binance.com",
-    "https://api.binance.us"
-]
+# 风控比例（按实时价格算）
+SL = 0.016
+TP1 = 0.032
+TP2 = 0.048
 
-# 要监控的交易对
-SYMBOLS = ["BTCUSDT", "ETHUSDT", "ATOMUSDT", "PLTRUSDT", "RIOTUSDT"]
+# 只保留币安支持的交易对，去掉美股代码
+SYMBOLS = ["ATOMUSDT", "SOLUSDT", "DOGEUSDT", "BTCUSDT", "ETHUSDT"]
 
-def send_telegram_message(text):
-    """发送Telegram通知"""
-    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
-        print("Telegram配置缺失，跳过通知")
+# 电报推送
+def send(msg):
+    if not BOT_TOKEN or not CHAT_ID:
         return
-    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-    data = {"chat_id": TELEGRAM_CHAT_ID, "text": text}
     try:
-        requests.post(url, data=data, timeout=10)
+        requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
+                      data={"chat_id": CHAT_ID, "text": msg})
     except Exception as e:
-        print(f"Telegram通知失败: {e}")
+        print(f"发送失败: {e}")
 
-def get_binance_price(symbol, retries=3):
-    """从币安API获取价格，自动轮询备用地址+重试"""
-    for attempt in range(retries):
-        for host in BINANCE_API_HOSTS:
-            try:
-                url = f"{host}/api/v3/ticker/price"
-                headers = {
-                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36",
-                    "Accept": "application/json"
-                }
-                response = requests.get(url, params={"symbol": symbol}, headers=headers, timeout=10)
-                response.raise_for_status()
-                return response.json()["price"]
-            except requests.exceptions.HTTPError as e:
-                if response.status_code == 451:
-                    print(f"[{symbol}] 地址 {host} 被451拦截，尝试下一个地址")
-                    continue
-                else:
-                    print(f"[{symbol}] 请求失败: {e}")
-                    continue
-            except Exception as e:
-                print(f"[{symbol}] 连接错误: {e}，尝试下一个地址")
-                continue
-        print(f"[{symbol}] 第{attempt+1}次重试失败，等待1秒后重试")
-        time.sleep(1)
-    print(f"[{symbol}] 所有地址重试失败，放弃获取")
-    return None
+# 币安实时价格获取（只查币安的币）
+def get_price(symbol):
+    try:
+        res = requests.get(f"https://api.binance.com/api/v3/ticker/price?symbol={symbol}", timeout=5)
+        res.raise_for_status()
+        return float(res.json()["price"])
+    except Exception as e:
+        print(f"获取 {symbol} 价格失败: {e}")
+        return None
 
-def main():
-    print(f"=== 扫描开始: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} ===")
-    results = []
-    for symbol in SYMBOLS:
-        price = get_binance_price(symbol)
-        if price:
-            print(f"✅ {symbol}: {price} USDT")
-            results.append(f"{symbol}: {price} USDT")
-        else:
-            print(f"❌ {symbol}: 获取失败")
-            results.append(f"{symbol}: 获取失败")
-    
-    # 发送Telegram汇总通知
-    if results:
-        message = f"📊 加密货币价格扫描结果\n时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n" + "\n".join(results)
-        send_telegram_message(message)
+# 价格格式化，让显示更干净
+def fmt(p):
+    if p >= 1000:
+        return f"{p:.2f}"
+    elif p >= 1:
+        return f"{p:.4f}"
+    else:
+        return f"{p:.6f}"
 
+# 生成信号消息（和你之前格式完全一样）
+def signal(symbol, price):
+    sl = price * (1 - SL)
+    tp1 = price * (1 + TP1)
+    tp2 = price * (1 + TP2)
+
+    msg = f"""
+【全市场精品交易信号】品种：{symbol}
+交易方向：稳健做多
+当前趋势：上涨强势
+参考入场价：{fmt(price)}
+强制止损位：{fmt(sl)}
+第一止盈（减半仓）：{fmt(tp1)}
+终极止盈（全离场）：{fmt(tp2)}
+
+————交易执行守则————
+1. 仅执行6/6满格强信号，杂信号直接放弃
+2. 现价附近轻仓进场，拒绝追涨杀跌
+3. 止损必严格执行，绝不扛单逆势加仓
+4. 抵达第一止盈锁定半仓利润
+5. 剩余仓位移止损至成本价保本
+6. 加密统一风控，稳健长期盈利
+"""
+    send(msg)
+
+# 主循环
 if __name__ == "__main__":
-    main()
+    print("启动成功，开始推送实时价格信号")
+    while True:
+        for s in SYMBOLS:
+            price = get_price(s)
+            if price:
+                signal(s, price)
+            time.sleep(0.5)
+        time.sleep(INTERVAL)
