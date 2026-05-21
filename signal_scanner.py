@@ -1,102 +1,96 @@
 
-# BTC 实时策略建议智能体 V1.6.1 报告
-**生成时间：** 2026-05-21 09:32 UTC  
-**数据来源：** OKX 合约 API（公开行情）  
-**策略版本：** V1.6.1（多周期共振 + 蒸馏模型）
+import ccxt
+import json
+import numpy as np
+from datetime import datetime, timezone
 
----
+exchange = ccxt.okx({'enableRateLimit': True})
 
-## Step 0 · 蒸馏特征库串联
-已查询【BTC 交易员数据蒸馏智能体】最近一次输出（2026-05-20），获取做空信号扫描器 v4.4 策略权重。本轮分析已结合该蒸馏经验进行推理。
+symbols = ['BTC/USDT:USDT', 'ETH/USDT:USDT', 'SOL/USDT:USDT']
+timeframes = ['1d', '4h', '1h']
 
----
+def ema(closes, period):
+    k = 2 / (period + 1)
+    ema_val = closes[0]
+    for c in closes[1:]:
+        ema_val = c * k + ema_val * (1 - k)
+    return ema_val
 
-## Step 1 · 账户实时仓位与PNL
-> ⚠️ **状态：无法获取** — 环境变量 `OKX_MNP` 未配置，账户鉴权失败。  
-> 请前往 **Settings → Secrets** 配置 `OKX_MNP`（JSON 格式：`{"apiKey":"...","secret":"...","passphrase":"..."}`）
+def rsi(closes, period=14):
+    deltas = np.diff(closes)
+    gains = np.where(deltas > 0, deltas, 0)
+    losses = np.where(deltas < 0, -deltas, 0)
+    avg_gain = np.mean(gains[-period:])
+    avg_loss = np.mean(losses[-period:])
+    if avg_loss == 0:
+        return 100
+    rs = avg_gain / avg_loss
+    return 100 - 100 / (1 + rs)
 
-当前持仓：未知 | 未实现PNL：未知
+def atr(highs, lows, closes, period=14):
+    trs = []
+    for i in range(1, len(closes)):
+        tr = max(highs[i] - lows[i], abs(highs[i] - closes[i-1]), abs(lows[i] - closes[i-1]))
+        trs.append(tr)
+    return np.mean(trs[-period:])
 
----
+results = {}
 
-## Step 2 · 多级别行情数据（实时获取）
+for sym in symbols:
+    results[sym] = {}
+    for tf in timeframes:
+        try:
+            ohlcv = exchange.fetch_ohlcv(sym, tf, limit=100)
+            if not ohlcv or len(ohlcv) < 30:
+                continue
+            ts = [x[0] for x in ohlcv]
+            opens = [x[1] for x in ohlcv]
+            highs = [x[2] for x in ohlcv]
+            lows = [x[3] for x in ohlcv]
+            closes = [x[4] for x in ohlcv]
+            vols = [x[5] for x in ohlcv]
 
-### BTC/USDT-SWAP
-| 周期 | 收盘价 | EMA20 | EMA60 | RSI(14) | ATR(14) | 趋势 |
-|------|--------|-------|-------|---------|---------|------|
-| 1D | $77,795 | $78,652 | $76,113 | 40.99 | 1,852 | 🟢 BULLISH |
-| 4H | $77,795 | $77,432 | $78,445 | 65.41 | 640 | 🔴 BEARISH |
-| 1H | $77,796 | $77,665 | $77,388 | 54.33 | 315 | 🟢 BULLISH |
+            e20 = ema(closes[-30:], 20)
+            e60 = ema(closes[-70:], 60)
+            r = rsi(closes[-20:])
+            at = atr(highs[-20:], lows[-20:], closes[-20:])
+            current = closes[-1]
+            trend = 'BULLISH' if e20 > e60 else 'BEARISH'
+            results[sym][tf] = {
+                'close': round(current, 2),
+                'ema20': round(e20, 2),
+                'ema60': round(e60, 2),
+                'rsi': round(r, 2),
+                'atr': round(at, 2),
+                'trend': trend,
+                'vol': round(vols[-1], 2)
+            }
+        except Exception as e:
+            results[sym][tf] = {'error': str(e)}
 
-### ETH/USDT-SWAP
-| 周期 | 收盘价 | EMA20 | EMA60 | RSI(14) | ATR(14) | 趋势 |
-|------|--------|-------|-------|---------|---------|------|
-| 1D | $2,133 | $2,228 | $2,228 | **30.83** ⚠️超卖 | 71.4 | 🟡 中性 |
-| 4H | $2,133 | $2,134 | $2,191 | 51.11 | 24.5 | 🔴 BEARISH |
-| 1H | $2,133 | $2,133 | $2,130 | 45.98 | 11.5 | 🟢 BULLISH |
+# Funding rates
+funding = {}
+for sym in symbols:
+    try:
+        fr = exchange.fetch_funding_rate(sym)
+        funding[sym] = round(float(fr.get('fundingRate', 0)) * 100, 4)
+    except Exception as e:
+        funding[sym] = None
 
-### SOL/USDT-SWAP
-| 周期 | 收盘价 | EMA20 | EMA60 | RSI(14) | ATR(14) | 趋势 |
-|------|--------|-------|-------|---------|---------|------|
-| 1D | $86.67 | $87.90 | $87.15 | 46.78 | 3.63 | 🟢 BULLISH |
-| 4H | $86.69 | $85.64 | $88.02 | 66.21 | 1.09 | 🔴 BEARISH |
-| 1H | $86.68 | $86.21 | $85.57 | 60.00 | 0.53 | 🟢 BULLISH |
+# Open Interest
+oi = {}
+for sym in symbols:
+    try:
+        inst_id = sym.replace('/USDT:USDT', '-USDT-SWAP')
+        resp = exchange.publicGetPublicOpenInterest({'instId': inst_id})
+        oi_val = float(resp['data'][0]['oi']) if resp.get('data') else None
+        oi[sym] = round(oi_val, 0) if oi_val else None
+    except Exception as e:
+        oi[sym] = None
 
----
-
-## Step 3 · 市场情绪
-
-| 标的 | 资金费率 | 持仓量 | 情绪 |
-|------|---------|--------|------|
-| BTC | +0.0023% | 3,248,616 张 | 中性，无多头拥挤 |
-| ETH | +0.0074% | 7,782,765 张 | 多头略偏高，注意拥挤风险 |
-| SOL | +0.0050% | 2,880,661 张 | 轻度多头，中性区间 |
-
----
-
-## Step 4 · AI 综合跨周期推理（蒸馏模型 V1.6.1）
-
-### 🔵 BTC 分析
-- **日线**：多头结构（EMA20 > EMA60），但价格回调至 EMA20 以下，RSI 41（中性偏低）
-- **4H**：空头结构（EMA20 < EMA60），RSI 65（偏高）→ 短期动能弱
-- **1H**：多头，RSI 54（中性）
-- **三周期共振评分：** 4/10（不足开仓阈值7分）
-- **结论：** 🟡 **降仓观望 / HOLD**
-
-### 🟣 ETH 分析
-- **日线**：RSI 30.83 进入超卖区域（历史蒸馏统计：此处向上反弹概率 ~67%）
-- **4H**：仍为空头结构，等待 EMA 金叉信号
-- **1H**：多头结构启动
-- **资金费率**：0.0074% 偏高，注意多头拥挤
-- **结论：** 👀 **条件多头观察** — 等待 4H RSI 突破 55 + EMA 金叉后可小仓做多
-
-### 🟠 SOL 分析
-- **日线**：多头，RSI 47（中性）
-- **4H**：空头结构，RSI 66 接近超买背离风险
-- **综合评分：** 5/10
-- **结论：** 🟡 **观望 / HOLD**
-
----
-
-## Step 5 · 自动执行结果
-
-| 标的 | 信号方向 | 执行状态 | 订单ID |
-|------|---------|---------|--------|
-| BTC | 观望 | ⏸ 跳过（信号不足） | — |
-| ETH | 条件多头（待确认） | ⏸ 等待 4H 确认 | — |
-| SOL | 观望 | ⏸ 跳过（信号不足） | — |
-| 自动下单 | — | ❌ 禁用（OKX_MNP 未配置） | — |
-
----
-
-## 风控状态
-- 当日熔断：正常（未触发8%阈值）
-- 单次最大亏损：账户净值 3%（配置后生效）
-- 单边最大仓位：20%（配置后生效）
-
----
-
-## 关键提示
-1. **配置 OKX_MNP**：前往 Settings → Secrets，添加密钥以启用仓位追踪和自动下单
-2. **ETH 观察要点**：当 4H K线收盘 EMA20 > EMA60 且 RSI > 55 时，可考虑入场做多（止损设为开仓价 × 0.98）
-3. **BTC 关注位**：若价格收复 EMA20（$78,652）且三周期共振，可考虑多头开仓
+print(json.dumps({
+    'market': results,
+    'funding': funding,
+    'oi': oi,
+    'timestamp': datetime.now(timezone.utc).isoformat()
+}))
