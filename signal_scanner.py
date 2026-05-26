@@ -1,138 +1,102 @@
 import os
 import time
-import logging
-import pandas as pd
+import requests
 from datetime import datetime
 from binance.client import Client
-from binance.exceptions import BinanceAPIException, BinanceRequestException
+from binance.exceptions import BinanceAPIException
 
-# -------------------------- 配置与日志初始化 --------------------------
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler('crypto_signals.log'),
-        logging.StreamHandler()
-    ]
-)
-logger = logging.getLogger(__name__)
+# ===================== 从 GitHub Secrets 读取配置（关键！） =====================
+# 这些变量必须在仓库的 Settings → Secrets and variables → Actions 里添加
+API_KEY = os.getenv("BINANCE_API_KEY")
+API_SECRET = os.getenv("BINANCE_API_SECRET")
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-# 从环境变量读取API密钥（避免硬编码）
-API_KEY = os.getenv('BINANCE_API_KEY', '')
-API_SECRET = os.getenv('BINANCE_API_SECRET', '')
-
-if not API_KEY or not API_SECRET:
-    logger.error("❌ 请先设置 BINANCE_API_KEY 和 BINANCE_API_SECRET 环境变量！")
-    exit(1)
-
-try:
-    client = Client(API_KEY, API_SECRET, testnet=True)  # 先在测试网运行
-    logger.info("✅ 交易所连接成功（测试网模式）")
-except Exception as e:
-    logger.error(f"❌ 交易所连接失败: {str(e)}")
-    exit(1)
-
-# -------------------------- 信号扫描核心函数 --------------------------
-def get_top_symbols(limit: int = 20) -> list:
-    """获取交易量最大的现货交易对"""
+# ===================== Telegram 推送函数 =====================
+def send_telegram_message(text):
+    """发送消息到 Telegram"""
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+        print("❌ 缺少 Telegram 配置，无法推送消息")
+        return False
+    
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    data = {
+        "chat_id": TELEGRAM_CHAT_ID,
+        "text": text,
+        "parse_mode": "Markdown"
+    }
     try:
+        response = requests.post(url, data=data, timeout=10)
+        if response.status_code == 200:
+            print("✅ 消息已推送到 Telegram")
+            return True
+        else:
+            print(f"❌ Telegram 推送失败: {response.text}")
+            return False
+    except Exception as e:
+        print(f"❌ Telegram 推送出错: {str(e)}")
+        return False
+
+# ===================== 币安连接 =====================
+try:
+    client = Client(API_KEY, API_SECRET, testnet=False)  # 主网读取权限即可
+    print("✅ 币安 API 连接成功")
+except Exception as e:
+    error_msg = f"❌ 币安 API 连接失败: {str(e)}"
+    print(error_msg)
+    send_telegram_message(f"⚠️ 加密信号机器人出错：\n{error_msg}")
+    exit(1)
+
+# ===================== 信号扫描逻辑（可自定义） =====================
+def scan_signals():
+    """扫描多空信号，返回结果列表"""
+    signals = []
+    try:
+        # 获取交易量前15的USDT交易对
         tickers = client.get_ticker()
         usdt_pairs = [t for t in tickers if t['symbol'].endswith('USDT')]
-        # 按24小时交易量排序
         usdt_pairs.sort(key=lambda x: float(x['quoteVolume']), reverse=True)
-        return [pair['symbol'] for pair in usdt_pairs[:limit]]
-    except BinanceAPIException as e:
-        logger.error(f"获取交易对失败: {str(e)}")
-        return []
+        top_symbols = [pair['symbol'] for pair in usdt_pairs[:15]]
 
-def analyze_signal(symbol: str, interval: str = Client.KLINE_INTERVAL_1HOUR) -> dict:
-    """单交易对多空信号分析（RSI+MACD+布林带组合）"""
-    try:
-        # 获取K线数据
-        klines = client.get_klines(
-            symbol=symbol,
-            interval=interval,
-            limit=100
-        )
-        df = pd.DataFrame(klines, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume',
-                                           'close_time', 'quote_asset_volume', 'trades',
-                                           'taker_buy_base', 'taker_buy_quote', 'ignore'])
-        df['close'] = df['close'].astype(float)
-        df['high'] = df['high'].astype(float)
-        df['low'] = df['low'].astype(float)
-
-        # 计算RSI
-        delta = df['close'].diff()
-        gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
-        loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
-        rs = gain / loss
-        rsi = 100 - (100 / (1 + rs))
-        current_rsi = rsi.iloc[-1]
-
-        # 计算布林带
-        sma20 = df['close'].rolling(window=20).mean()
-        std20 = df['close'].rolling(window=20).std()
-        upper_band = sma20 + 2 * std20
-        lower_band = sma20 - 2 * std20
-        current_price = df['close'].iloc[-1]
-
-        # 生成信号
-        signal = "中性"
-        score = 0
-        if current_rsi < 30 and current_price < lower_band.iloc[-1]:
-            signal = "做多信号"
-            score = 1
-        elif current_rsi > 70 and current_price > upper_band.iloc[-1]:
-            signal = "做空信号"
-            score = -1
-
-        return {
-            "symbol": symbol,
-            "current_price": round(current_price, 4),
-            "rsi": round(current_rsi, 2),
-            "bollinger_upper": round(upper_band.iloc[-1], 4),
-            "bollinger_lower": round(lower_band.iloc[-1], 4),
-            "signal": signal,
-            "score": score
-        }
-
-    except Exception as e:
-        logger.error(f"分析 {symbol} 失败: {str(e)}")
-        return {"symbol": symbol, "signal": "错误", "score": 0}
-
-# -------------------------- 主循环 --------------------------
-def main():
-    scan_interval = 300  # 每5分钟扫描一次（单位：秒）
-    logger.info("🚀 加密货币多空信号监控机器人启动")
-    logger.info(f"扫描间隔: {scan_interval}秒")
-
-    while True:
-        logger.info("\n-------------------------- 新一轮扫描开始 --------------------------")
-        symbols = get_top_symbols(limit=15)
-        if not symbols:
-            logger.warning("⚠️ 未获取到交易对，等待下一轮扫描")
-            time.sleep(scan_interval)
-            continue
-
-        signals = []
-        for symbol in symbols:
-            result = analyze_signal(symbol)
-            signals.append(result)
-            # 限流控制，避免触发API限制
+        for symbol in top_symbols:
+            # 获取1小时K线数据
+            klines = client.get_klines(
+                symbol=symbol,
+                interval=Client.KLINE_INTERVAL_1HOUR,
+                limit=50
+            )
+            close_prices = [float(k[4]) for k in klines]
+            current_price = close_prices[-1]
+            
+            # 简单信号逻辑：价格突破20周期均线
+            ma20 = sum(close_prices[-20:]) / 20
+            if current_price > ma20 * 1.02:
+                signals.append(f"📈 做多信号: {symbol} | 当前价: {current_price:.4f} | 20均线: {ma20:.4f}")
+            elif current_price < ma20 * 0.98:
+                signals.append(f"📉 做空信号: {symbol} | 当前价: {current_price:.4f} | 20均线: {ma20:.4f}")
+            
+            # 限流，避免触发API限制
             time.sleep(0.3)
 
-        # 输出信号结果
-        for sig in signals:
-            if sig['signal'] != "中性" and sig['signal'] != "错误":
-                logger.info(f"[{sig['signal']}] {sig['symbol']} | 价格: {sig['current_price']} | RSI: {sig['rsi']}")
+        return signals
 
-        logger.info("-------------------------- 扫描完成，等待下一轮 --------------------------")
-        time.sleep(scan_interval)
+    except BinanceAPIException as e:
+        print(f"❌ 扫描出错: {str(e)}")
+        return []
+
+# ===================== 主函数 =====================
+def main():
+    print(f"🚀 开始扫描，时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    signals = scan_signals()
+
+    if signals:
+        message = "🔔 加密货币信号扫描结果：\n" + "\n".join(signals)
+    else:
+        message = "🔔 加密货币信号扫描完成，未发现有效信号"
+    
+    print(message)
+    send_telegram_message(message)
+    print("✅ 本次扫描任务完成")
 
 if __name__ == "__main__":
-    try:
-        main()
-    except KeyboardInterrupt:
-        logger.info("🛑 用户手动停止程序")
-    except Exception as e:
-        logger.critical(f"程序崩溃: {str(e)}", exc_info=True)
+    main()
